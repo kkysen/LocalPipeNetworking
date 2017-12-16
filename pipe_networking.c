@@ -61,7 +61,7 @@ static int read_pipe_name(const int in_fd, char *const out_pipe_name, size_t *na
     return out_fd;
 }
 
-static int unlink_if_exists(const char *const path) {
+int unlink_if_exists(const char *const path) {
     if (unlink(path) == -1) {
         // client may have remove FIFO
         if (errno != ENOENT) {
@@ -110,7 +110,7 @@ TwoWayPipe client_handshake(const char *const in_pipe_name) {
         return BAD_TWO_WAY_PIPE;
     }
     
-    printf("Client handshake finished: in = %d, out = %d\n", in_fd, out_fd);
+    printf("Handshake with client finished: in = %d, out = %d\n", in_fd, out_fd);
     return (TwoWayPipe) {.in_fd = in_fd, .out_fd = out_fd};
 }
 
@@ -130,8 +130,25 @@ static ssize_t generate_random_pipe_name_of_size(char *const pipe_name,
     return name_length;
 }
 
+static int open_with_timeout(const char *const path, int flags, uint seconds) {
+    int fd;
+    uint elapsed = 0;
+    const uint interval = 1;
+    do {
+        fd = open(path, flags);
+        if (fd != -1) {
+            return fd;
+        }
+        sleep(interval);
+        elapsed += interval;
+    } while (elapsed < seconds);
+    return -1;
+}
+
+typedef unsigned int uint;
+
 static int connect_to_out_pipe(const char *const out_pipe_name) {
-    const int out_fd = open(out_pipe_name, O_WRONLY);
+    const int out_fd = open_with_timeout(out_pipe_name, O_WRONLY, 3);
     if (out_fd == -1) {
         perror("open(out_pipe_name, O_WRONLY)");
         return -1;
@@ -231,14 +248,14 @@ TwoWayPipe server_handshake(const char *const out_pipe_name) {
     }
     
     const int in_fd = server_handshake_existing_out_pipe(out_fd);
-    if (in_fd) {
+    if (in_fd == -1) {
         if (close(out_fd) == -1) {
             perror("close(out_fd)");
         }
         return BAD_TWO_WAY_PIPE;
     }
     
-    printf("Server handshake finished: in = %d, out = %d\n", in_fd, out_fd);
+    printf("Handshake with server finished: in = %d, out = %d\n", in_fd, out_fd);
     return (TwoWayPipe) {.in_fd = in_fd, .out_fd = out_fd};
 }
 

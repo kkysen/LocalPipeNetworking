@@ -56,12 +56,15 @@ void StringBuilder_append_string(StringBuilder *const sb, char *const s) {
     StringBuilder_append_string_n(sb, s, strlen(s));
 }
 
-void StringBuilder_append_stream(StringBuilder *const sb, FILE *const file) {
+size_t StringBuilder_append_stream(StringBuilder *const sb, FILE *const file) {
     char buffer[4096] = {0};
+    size_t total_num_bytes = 0;
     size_t num_bytes;
-    while (0 < (num_bytes = fread(buffer, 1, sizeof(buffer) - 1, file))) {
+    while ((num_bytes = fread(buffer, 1, sizeof(buffer) - 1, file)) > 0) {
+        total_num_bytes += num_bytes;
         StringBuilder_append_bytes(sb, buffer, num_bytes);
     }
+    return total_num_bytes;
 }
 
 void StringBuilder_clear(StringBuilder *const sb) {

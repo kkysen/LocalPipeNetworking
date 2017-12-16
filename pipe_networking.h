@@ -49,4 +49,6 @@ TwoWayPipe client_handshake(const char *in_pipe_name);
  */
 TwoWayPipe server_handshake(const char *out_pipe_name);
 
+int unlink_if_exists(const char *path);
+
 #endif // SYSTEMS_PIPE_NETWORKING_H

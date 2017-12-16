@@ -7,6 +7,8 @@
 
 #include "sigaction.h"
 
+extern int stacktrace_level;
+
 /**
  * Print the stacktrace and PID of a thread to stderr.
  */

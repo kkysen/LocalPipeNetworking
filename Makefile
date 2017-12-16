@@ -1,4 +1,4 @@
-CC = gcc -ggdb -std=c99 -Wall -Werror -O3
+CC = gcc -ggdb -std=gnu99 -Wall -Werror -O3
 SERVER_OUT = server
 CLIENT_OUT = client
 
@@ -47,5 +47,5 @@ rerun: all
 	./$(SERVER_OUT)
 
 valgrind: clean all
-	valgrind -v --leak-check=full ./$(OUT)
+	valgrind -v --leak-check=full ./$(SERVER_OUT)
 

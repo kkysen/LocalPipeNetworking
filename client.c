@@ -25,20 +25,73 @@ int run() {
         goto error_close;
     }
     
-    const size_t length = (size_t) signed_length;
-    write(pipes.out_fd, &length, sizeof(length), error_close);
-    write(pipes.out_fd, line, length, error_close);
-    
-    size_t received_length;
-    read(pipes.in_fd, &received_length, sizeof(received_length), error_close);
-    
-    char *const received = (char *) malloc(received_length);
-    if (!received) {
-        perror("malloc(received_length)");
+    if (signed_length == 0) {
         goto error_close;
     }
     
-    read(pipes.in_fd, received, received_length, error_free);
+    const size_t length = (size_t) signed_length - 1;
+    if (length == 0) {
+        goto error_close; // no input
+    }
+    
+    line[length] = 0; // cutoff '\n' at end
+    printf("entered: \"%s\"\n", line);
+    
+    {
+        const ssize_t bytes_written = write(pipes.out_fd, &length, sizeof(length));
+        if (bytes_written != sizeof(length)) {
+            perror("write(pipes.out_fd, &length, sizeof(length))");
+            if (bytes_written == -1) {
+                goto error_close;
+            } else {
+                fprintf(stderr, "%zd != %zu", bytes_written, sizeof(length));
+            }
+        }
+    }
+    
+    {
+        const ssize_t bytes_written = write(pipes.out_fd, line, length);
+        if (bytes_written != length) {
+            perror("write(pipes.out_fd, line, length)");
+            if (bytes_written == -1) {
+                goto error_close;
+            } else {
+                fprintf(stderr, "%zd != %zu", bytes_written, length);
+            }
+        }
+    }
+    
+    size_t received_length;
+    {
+        const ssize_t bytes_read = read(pipes.in_fd, &received_length, sizeof(received_length));
+        if (bytes_read != sizeof(received_length)) {
+            perror("read(pipes.in_fd, &received_length, sizeof(received_length))");
+            if (bytes_read == -1) {
+                goto error_close;
+            } else {
+                fprintf(stderr, "%zd != %zu", bytes_read, sizeof(received_length));
+            }
+        }
+    }
+    
+    char *const received = (char *) calloc(received_length + 1, sizeof(char));
+    if (!received) {
+        perror("calloc(received_length + 1, sizeof(char))");
+        goto error_close;
+    }
+    
+    {
+        const ssize_t bytes_read = read(pipes.in_fd, received, received_length);
+        if (bytes_read != received_length) {
+            perror("read(pipes.in_fd, received, received_length)");
+            if (bytes_read == -1) {
+                goto error_free;
+            } else {
+                fprintf(stderr, "%zd != %zu", bytes_read, received_length);
+            }
+        }
+    }
+    
     printf("Modified Text from Server: \"%s\"\n", received);
     
     free(received);

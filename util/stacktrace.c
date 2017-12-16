@@ -14,11 +14,13 @@
 
 #include "utils.h"
 #include "string_builder.h"
-#include "sigaction.h"
 
 #ifdef __linux__
 #include <err.h>
     #include <execinfo.h>
+//#include <bits/sigstack.h>
+#include <signal.h>
+
 #endif
 
 #ifdef __APPLE__
@@ -26,6 +28,8 @@
 #else
     #define addr2line_base "addr2line -f -s -p -e "
 #endif
+
+int stacktrace_level = 0;
 
 static char addr2line_cmd[arraylen(addr2line_base) + PATH_MAX + arraylen(" ") + PTR_MAX_STRLEN + 1] = {0};
 static char *addr_start = NULL;
@@ -41,7 +45,7 @@ static StringBuilder *stacktrace_sb = NULL;
  * @param sb the StringBuilder to append the line number, etc. message to
  * @return -1 if error, else the exit status of the popen() call to the addr2line program
  */
-static int addr2line(const void *const addr, StringBuilder *const sb) {
+static ssize_t addr2line(const void *const addr, StringBuilder *const sb) {
     if (!addr_start) {
         memcpy(addr2line_cmd, addr2line_base, sizeof(addr2line_base));
         if (readlink("/proc/self/exe", addr2line_cmd + arraylen(addr2line_base) - 1, PATH_MAX) == -1) {
@@ -51,14 +55,28 @@ static int addr2line(const void *const addr, StringBuilder *const sb) {
         *addr_start++ = ' ';
     }
     sprintf(addr_start, "%p", addr);
-    FILE *const output = popen(addr2line_cmd, "r");//fopen("p.txt", "r");
+    FILE *const output = popen(addr2line_cmd, "r");
     if (!output) {
         perror("popen");
         return -1;
     }
     StringBuilder_append_string(sb, "    ");
-    StringBuilder_append_stream(sb, output);
-    return WEXITSTATUS(pclose(output));
+    const size_t streamed_bytes = StringBuilder_append_stream(sb, output);
+    if (streamed_bytes == 0) {
+        // if popen() doesn't work for some reason, at least use system
+        printf("    ");
+        if (system(addr2line_cmd) == -1) {
+            perror("system");
+        }
+    }
+    const int ret_val = pclose(output);
+    if (ret_val == -1) {
+        return -1;
+    }
+    if (WEXITSTATUS(ret_val) != 0) {
+        return -1;
+    }
+    return streamed_bytes;
 }
 
 // header for builtin func
@@ -85,26 +103,47 @@ static void posix_print_stack_trace(StringBuilder *const sb) {
     if (!stacktrace_sb) {
         stacktrace_sb = StringBuilder_new(0);
     }
-    
     const int trace_size = backtrace(stack_traces, MAX_STACK_FRAMES);
     if (trace_size < 0) {
         perror("backtrace");
         return;
     }
-    
+//    pd(trace_size);
+//    debug();
     StringBuilder_ensure_more_capacity(sb, (size_t) (trace_size + 1) * AVG_ADDR_2_LINE_LENGTH);
     StringBuilder_append_string(sb, "Stacktrace:\n");
-    
+//    debug();
     const char **const messages = (const char **) backtrace_symbols(stack_traces, trace_size);
-    for (uint32_t i = 0; i < trace_size; ++i) {
-        if (addr2line(stack_traces[i], sb) != 0) {
-            fprintf(stderr, "\terror determining line # for: %s\n", messages[i]);
-        }
+//    debug();
+    if (!messages) {
+        perror("backtrace_symbols(stack_traces, trace_size)");
+        StringBuilder_clear(sb);
+        return;
     }
-    fprintf(stderr, "\n[%d : %d]\n%s\n", getpid(), getppid(), sb->chars);
-    fflush(stderr);
+    size_t total_streamed_bytes = 0;
+    for (uint32_t i = 0; i < trace_size; ++i) {
+        const ssize_t streamed_bytes = addr2line(stack_traces[i], sb);
+        if (streamed_bytes == -1) {
+            fprintf(stderr, "\terror determining line # for: %s\n", messages[i]);
+        } else {
+            total_streamed_bytes += streamed_bytes;
+        }
+//        ps(sb->chars);
+    }
+//    debug();
+//    ps(sb->chars);
+//    debug();
+    
+    // fprintf(stderr) hangs and raises SIGSEGV sometimes, so I'm using printf
+//    fprintf(stderr, "\n[%d : %d]\n%s\n", getpid(), getppid(), sb->chars);
+//    fflush(stderr);
+    if (total_streamed_bytes > 0) {
+        printf("\n[%d : %d]\n%s\n", getpid(), getppid(), sb->chars);
+    }
+//    debug();
     StringBuilder_clear(sb);
     free(messages);
+//    debug();
 }
 
 void print_stack_trace() {
@@ -159,8 +198,7 @@ static void catch_signal_and_print_msg(int signal, int code, StringBuilder *cons
                 catch_FPE(FPE_FLTRES, "floating-point underflow");
                 catch_FPE(FPE_FLTINV, "floating-point inexact result");
                 catch_FPE(FPE_FLTSUB, "subscript out of range");
-                default:
-                print_signal("SIGFPE", "Arithmetic Exception");
+                default: print_signal("SIGFPE", "Arithmetic Exception");
             }
             break;
         case SIGILL:
@@ -173,12 +211,10 @@ static void catch_signal_and_print_msg(int signal, int code, StringBuilder *cons
                 catch_ILL(ILL_PRVREG, "privileged register");
                 catch_ILL(ILL_COPROC, "coprocessor error");
                 catch_ILL(ILL_BADSTK, "internal stack error");
-                default:
-                print_signal("SIGILL", "Illegal Instruction");
+                default: print_signal("SIGILL", "Illegal Instruction");
             }
             break;
-        default:
-        print_signal("Unknown Signal", "Unknown Cause");
+        default: print_signal("Unknown Signal", "Unknown Cause");
     }
 }
 
@@ -190,6 +226,11 @@ static void catch_signal_and_print_msg(int signal, int code, StringBuilder *cons
  * @param context extra context about the signal caught
  */
 static void stack_trace_signal_handler_posix(int signal, siginfo_t *siginfo, void *context) {
+    if (stacktrace_level != 0) {
+        perror("Recursive signal raised in stacktrace handler");
+        _Exit(1);
+    }
+    stacktrace_level++;
     if (!stacktrace_sb) {
         stacktrace_sb = StringBuilder_new(0);
     }
@@ -198,8 +239,11 @@ static void stack_trace_signal_handler_posix(int signal, siginfo_t *siginfo, voi
     StringBuilder_append_string(sb, "Caught ");
     catch_signal_and_print_msg(signal, siginfo->si_code, sb);
     StringBuilder_append_string(sb, "\n");
+//    debug();
     posix_print_stack_trace(sb);
-    _Exit(1);
+//    debug();
+    stacktrace_level--;
+    exit(1);
 }
 
 #undef catch_ILL
@@ -237,7 +281,7 @@ void set_stack_trace_signal_handler() {
         add_action(SIGILL);
         add_action(SIGTERM);
         add_action(SIGABRT);
-        
+
 //        p("set stacktrace signal handler");
     }
 }

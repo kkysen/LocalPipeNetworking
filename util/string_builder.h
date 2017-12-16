@@ -85,8 +85,9 @@ void StringBuilder_append_string(StringBuilder *sb, char *s);
  *
  * @param [in, out] sb this StringBuilder
  * @param [in] file the file to append
+ * @return the number of bytes read from the stream
  */
-void StringBuilder_append_stream(StringBuilder *sb, FILE *file);
+size_t StringBuilder_append_stream(StringBuilder *sb, FILE *file);
 
 /**
  * Clear this StringBuilder,
